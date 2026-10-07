@@ -1,0 +1,4 @@
+# 人设原图目录：把 bot 的人设图片（jpg/png/webp/gif/bmp）放进本目录即可，
+# 放好后发 /人设刷新 或调用 view_all_image 即可生效；缩略图会自动生成在
+# image_thumbup/（可整体删除，按需重建）。图片 ID 取内容 sha1 前 12 位，
+# 改文件名不影响 ID，改图片内容才会换 ID。

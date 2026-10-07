@@ -1,0 +1,13 @@
+# 运行时生成，不入库（Runner 依据 config_model 生成）
+/config.toml
+
+# Python 产物
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 运行时目录与缓存（可重建）
+/data/
+/runtime/
+/cache/
+/image_thumbup/
