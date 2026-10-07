@@ -279,7 +279,8 @@ v1.3.0 之前 `infos` 是**根级字段**（`[[infos]]`），看起来更自然�
 
 - **ID = 内容哈希**（sha1 前 12 位）：改名/挪目录 ID 不变；**改了内容才换 ID**，并会重新生成缩略图
   （旧缩略图会留在 `image_thumbup/` 里当垃圾，不影响正确性，可随时整目录删除）。
-- 原图会直接进模型上下文：长边 1500～2400 是已验证可用的量级，再大建议先压。
+- 原图会直接进模型上下文：长边 1500～2400 是已验证可用的量级，再大建议先压；
+  单张超过 15MB 的原图会被拒绝读取（v1.3.3 体积上限）。
 - 图库是「**同一个 bot 的多套装扮 / 画风**」模型：不用于放第二个人物当另一个身份（persona packs 不在支持范围）。
 
 ### 模型怎么用
@@ -326,7 +327,7 @@ v1.3.0 之前 `infos` 是**根级字段**（`[[infos]]`），看起来更自然�
 | 比对总是「没结果」 | 看工具返回的失败分类：**截断** → 调大 `vision.max_tokens`（或让任务绑一个非推理模型）；**没有按 JSON 回答** → 换视觉模型或调 `temperature`；**视觉请求超时** → 瓶颈通常在 Host 的 Provider timeout（`[llm].timeout_seconds`），插件侧调大 `image_timeout_seconds` 只是让图片多占一会儿 |
 | 检索永远「没有匹配」 | 降低 `search.match_threshold`（默认 15.0），或给条目补关键词 |
 
-## 防护点（v1.3.0 全检结论，v1.3.2 增补）
+## 防护点（v1.3.0 全检结论，v1.3.2 / v1.3.3 增补）
 
 | 风险 | 防护实现 | 复现用例 |
 | --- | --- | --- |
@@ -340,7 +341,8 @@ v1.3.0 之前 `infos` 是**根级字段**（`[[infos]]`），看起来更自然�
 | 两个超时顺序反了（用户只看到「超预算」） | 运行期夹取 `min(单图, 消息×0.8)`，生效值与「已被夹取」标注在 `/人设状态` | `test_effective_timeout_short_fires_first` |
 | 内层视觉预算越过 RPC 层（RPC 先超时、真因被文本启发式猜） | 生效超时再按 RPC 预算 −10s 兜底夹取（v1.3.2） | `test_effective_image_timeout_respects_rpc_budget` |
 | 比对判定词的否定变体被静默判反（「不符合」被判「符合」） | 否定变体**先于**肯定词匹配；结构化 `same_person` 布尔优先于判定词，矛盾时对齐 verdict 并写进 differences 留痕（v1.3.2） | `test_normalize_verdict_negative_variants_are_conflict`（含旧实现反向验证）、`test_compare_images_structured_boolean_wins_and_annotates_contradiction` |
-| 本地路径图片引用读到任意文件（非图片被当图喂给模型） | `file`/`path` 引用严格魔数校验 + 15MB 上限 + 读盘走线程池（v1.3.2）；不设目录白名单是为了不误杀宿主附件路径 | `test_local_image_reference_rejects_non_image_and_oversize` |
+| 本地路径图片引用读到任意文件（非图片被当图喂给模型） | `file`/`path` 引用严格魔数校验 + 15MB 上限 + 读盘走线程池（v1.3.2）；不设目录白名单是为了不误杀宿主附件路径。**权限边界（审核建议②）**：通过校验的引用等价于「读进程权限内任意 ≤15MB 真图片」——证件照、截图等敏感图片请勿放在 bot 进程可访问的位置 | `test_local_image_reference_rejects_non_image_and_oversize` |
+| 巨图原图无上限，整份 base64 进模型上下文 | 原图读取 stat 预检 + 15MB 上限（stat 与读取间替换有兜底复检），超限返回可读压缩提示（v1.3.3，插件中心审核建议①） | `test_original_image_size_cap` |
 | 空条目日志序号失真（连续空条目重复「第 1 条」） | 按原始序号打日志（v1.3.2） | `test_collect_infos_blank_log_uses_raw_index` |
 | 把插件永久挂在回复主链上（改写请求失败面 + 与宿主 `{identity}` 重复） | v1.3.0 移除注入：**零 hook、零请求改写**，身份改由宿主配置承载；源码级守门用例禁止 `HookHandler`/`modified_kwargs` 复活 | `test_no_request_rewriting_code_path`、`test_plugin_never_registers_request_rewriting_components`、`test_no_hook_component_static` |
 | 配置页保存被静默吞掉（根级字段 ↔ 合成 `general` 节错位） | v1.3.1：`infos` 落在真实 `[general]` 节，读写两侧对齐；旧根级 `[[infos]]` 自动迁移、非列表值打 WARNING，绝不静默丢 | `test_webui_save_keeps_infos_in_general_section`、`test_legacy_root_infos_still_works`、`test_general_section_wins_over_legacy_root`、`test_webui_schema_exposes_infos_as_real_general_section` |
@@ -378,6 +380,13 @@ v1.3.0 之前 `infos` 是**根级字段**（`[[infos]]`），看起来更自然�
 >    示例图涉及二创版权且 README 本就声明「别二次分发」，公开分发改为只带通用模板示例，
 >    `self_image/` 保留空目录（`.gitkeep`），放图即用。
 > **`_manifest.json` 版本同步为 `1.3.2`**。
+> v1.3.3（插件中心审核建议落地，无配置结构变化，**`config_version` 保持 `1.3.0`**）：
+> ① `get_self_image` / 比对参考图的**原图读取加 15MB 体积上限**（stat 预检 + 读取后兜底复检），
+>    超限返回可读压缩提示——此前原图侧无上限，多大就 base64 多大进模型上下文；
+> ② README 明确 `file`/`path` 引用的**权限边界**：通过魔数校验的引用等价于「读进程权限内
+>    任意 ≤15MB 真图片」，敏感图片请勿放在 bot 进程可访问的位置（刻意不设目录白名单，
+>    避免误杀宿主附件路径）。
+> **`_manifest.json` 版本同步为 `1.3.3`**。
 
 > 已知残余（评估后接受，不修）：`resolve-then-check` 的校验与实际连接之间存在 DNS 重绑定
 > （TOCTOU）窗口——httpx 无连接前钩子，属该方案的业界常规残余；图库每次工具调用全量重扫、
@@ -400,7 +409,7 @@ v1.3.0 之前 `infos` 是**根级字段**（`[[infos]]`），看起来更自然�
 ```bash
 python run_gates.py plugins/self-identity                              # 静态检查 + FakeHost 冒烟
 python -m pytest plugins/self-identity/tests/test_self_identity.py -q  # 行为回归（70 项）
-python -m pytest plugins/self-identity/tests/test_audit.py -q          # 审计用例（21 项）
+python -m pytest plugins/self-identity/tests/test_audit.py -q          # 审计用例（22 项）
 python plugins/self-identity/tests/smoke_test.py                       # 包式加载冒烟（52 项 + 真机探针）
 ```
 

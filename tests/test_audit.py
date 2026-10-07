@@ -543,3 +543,30 @@ def test_effective_image_timeout_respects_rpc_budget(tmp_path: Path):
     })
     seconds2, clamped2 = plugin2._effective_image_timeout()
     assert seconds2 == 88.0 and clamped2 is True
+
+
+# ══════════════════════════════════════════════════════════ 7. v1.3.3 审核建议回归
+
+
+def test_original_image_size_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """v1.3.3（插件中心审核建议①）：get_self_image 原图读取有体积上限。
+
+    旧实现原图侧无上限：图库里放多大就 base64 多大进模型上下文。
+    monkeypatch 上限避免在测试里真写 15MB 文件；对照例证明上限内读取正常。
+    """
+    plugin = _plugin(tmp_path)
+    image_dir = tmp_path / "images"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    good = image_dir / "small.png"
+    good.write_bytes(MIN_PNG)
+
+    # 对照：上限内读取成功（证明用例前提成立，且图库扫描能发现新图）
+    result = asyncio.run(plugin.get_self_image(image_name="small.png"))
+    assert result.get("success"), f"上限内的图竟读取失败：{result.get('content')}"
+
+    # 超限：stat 预检拒绝，提示可读且含压缩建议
+    monkeypatch.setattr(imageio_si, "MAX_IMAGE_BYTES", 64)
+    result = asyncio.run(plugin.get_self_image(image_name="small.png"))
+    assert not result.get("success")
+    content = result.get("content", "")
+    assert "超过体积上限" in content and "压缩" in content, f"超限提示不可读：{content!r}"

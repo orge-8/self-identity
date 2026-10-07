@@ -618,10 +618,27 @@ class SelfIdentityPlugin(MaiBotPlugin):
         )
         if record is None:
             return None, None, "", resolve_error
+        # v1.3.3（插件中心审核建议①）：原图读取加体积上限——先 stat 预检（不把巨型文件
+        # 整个读进内存），读取后再兜底校验一次；超限给可读压缩提示，而不是把巨图
+        # base64 进模型上下文。缩略图侧早有 max_px 兜底，原图侧此前没有。
+        try:
+            size_bytes = record.path.stat().st_size
+        except OSError as exc:
+            return record, None, "", f"人设图读取失败：{record.name}（{type(exc).__name__}）"
+        if size_bytes > imageio_si.MAX_IMAGE_BYTES:
+            return record, None, "", (
+                f"人设图超过体积上限（{imageio_si.MAX_IMAGE_BYTES // (1024 * 1024)} MB）：{record.name}"
+                f"（实际 {size_bytes / (1024 * 1024):.1f} MB）。原图会整份进模型上下文，请压缩后再放入图库。"
+            )
         try:
             data = await asyncio.to_thread(record.path.read_bytes)
         except OSError as exc:
             return record, None, "", f"人设图读取失败：{record.name}（{type(exc).__name__}）"
+        if len(data) > imageio_si.MAX_IMAGE_BYTES:  # 兜底：stat 与读取之间文件被替换
+            return record, None, "", (
+                f"人设图超过体积上限（{imageio_si.MAX_IMAGE_BYTES // (1024 * 1024)} MB）：{record.name}。"
+                "原图会整份进模型上下文，请压缩后再放入图库。"
+            )
         if not data:
             return record, None, "", f"人设图为空文件：{record.name}"
         mime = imageio_si.mime_type(imageio_si.sniff_format(data, imageio_si.format_from_name(record.name)))
